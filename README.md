@@ -130,7 +130,7 @@ sandbox@my-assistant:~$ openclaw agent --agent main --local -m "hello" --session
 
 ### Uninstall
 
-To remove NemoClaw and all resources created during setup, run the uninstall script from the repo root:
+To remove NemoClaw and all resources created during setup, run the [uninstall script](https://github.com/NVIDIA/NemoClaw/blob/main/uninstall.sh) from the repo root:
 
 ```console
 $ ./uninstall.sh
