@@ -4,7 +4,15 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPluginConfig = getPluginConfig;
 exports.default = register;
-const cli_js_1 = require("./cli.js");
+/**
+ * NemoClaw — OpenClaw Plugin for OpenShell
+ *
+ * Uses the real OpenClaw plugin API. Types defined locally are minimal stubs
+ * that match the OpenClaw SDK interfaces available at runtime via
+ * `openclaw/plugin-sdk`. We define them here because the SDK package is only
+ * available inside the OpenClaw host process and cannot be imported at build
+ * time.
+ */
 const slash_js_1 = require("./commands/slash.js");
 const config_js_1 = require("./onboard/config.js");
 function activeModelEntries(onboardCfg) {
@@ -92,11 +100,7 @@ function register(api) {
         acceptsArgs: true,
         handler: (ctx) => (0, slash_js_1.handleSlashCommand)(ctx, api),
     });
-    // 2. Register `openclaw nemoclaw` CLI subcommands (commander.js)
-    api.registerCli((cliCtx) => {
-        (0, cli_js_1.registerCliCommands)(cliCtx, api);
-    }, { commands: ["nemoclaw"] });
-    // 3. Register nvidia-nim provider — use onboard config if available
+    // 2. Register nvidia-nim provider — use onboard config if available
     const onboardCfg = (0, config_js_1.loadOnboardConfig)();
     const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
     api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));
@@ -110,7 +114,7 @@ function register(api) {
     api.logger.info(`  │  Endpoint:  ${bannerEndpoint.padEnd(40)}│`);
     api.logger.info(`  │  Provider:  ${bannerProvider.padEnd(40)}│`);
     api.logger.info(`  │  Model:     ${bannerModel.padEnd(40)}│`);
-    api.logger.info("  │  Commands:  openclaw nemoclaw <command>             │");
+    api.logger.info("  │  Slash:     /nemoclaw                               │");
     api.logger.info("  └─────────────────────────────────────────────────────┘");
     api.logger.info("");
 }
