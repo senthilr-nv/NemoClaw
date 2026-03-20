@@ -698,7 +698,7 @@ async function setupNim(sandboxName, gpu) {
         );
 
         console.log("  Waiting for NIM to become healthy...");
-        const startup = nim.monitorNimStartup(sandboxName, 8000, 1200, 14400);
+        const startup = nim.monitorNimStartup(sandboxName, 8000, 1200, 5, 14400);
         if (!startup.healthy) {
           console.error(`  ${startup.reason || "NIM failed to start."}`);
           if (startup.detail) {
