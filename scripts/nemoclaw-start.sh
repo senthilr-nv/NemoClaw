@@ -217,29 +217,52 @@ PYAUTOPAIR
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/626
 PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
 PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
-export HTTP_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
-export HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
-export NO_PROXY="localhost,127.0.0.1,::1,inference.local,${PROXY_HOST}"
+_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
+_NO_PROXY_VAL="localhost,127.0.0.1,::1,inference.local,${PROXY_HOST}"
+export HTTP_PROXY="$_PROXY_URL"
+export HTTPS_PROXY="$_PROXY_URL"
+export NO_PROXY="$_NO_PROXY_VAL"
+export http_proxy="$_PROXY_URL"
+export https_proxy="$_PROXY_URL"
+export no_proxy="$_NO_PROXY_VAL"
 
-# OpenShell re-injects its narrow NO_PROXY=127.0.0.1,localhost,::1 every time a
-# user connects via `openshell sandbox connect`.  Write a profile snippet so the
-# full value is restored on every login shell.
+# OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
+# time a user connects via `openshell sandbox connect`.  The connect path spawns
+# `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
+# ~/.profile or /etc/profile.d/*.  Write the full proxy config to ~/.bashrc so
+# interactive sessions see the correct values.
 #
-# When running as root (normal ENTRYPOINT path), write to /etc/profile.d/ which
-# is writable before Landlock lockdown.  When running as non-root (Brev, some CI
-# environments), fall back to ~/.profile which the sandbox user always owns.
-_PROXY_SNIPPET=$(
-  cat <<PROXYPROFILE
-# Written by nemoclaw-start.sh — restores full proxy config after OpenShell env injection.
-export HTTP_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
-export HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
-export NO_PROXY="localhost,127.0.0.1,::1,inference.local,${PROXY_HOST}"
-PROXYPROFILE
-)
-if [ "$(id -u)" -eq 0 ] && [ -d /etc/profile.d ]; then
-  printf '%s\n' "$_PROXY_SNIPPET" >/etc/profile.d/nemoclaw-proxy.sh
-elif [ -w "${HOME:-/sandbox}" ]; then
-  printf '\n%s\n' "$_PROXY_SNIPPET" >>"${HOME:-/sandbox}/.profile"
+# Both uppercase and lowercase variants are required: Node.js undici prefers
+# lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
+# curl/wget use uppercase.  gRPC C-core uses lowercase.
+#
+# Also write to ~/.profile for login-shell paths (e.g. `sandbox create -- cmd`
+# which spawns `bash -lc`).
+#
+# Idempotency: use a marker comment so repeated container restarts don't
+# duplicate the block.
+_PROXY_MARKER="# nemoclaw-proxy-config"
+_PROXY_SNIPPET="${_PROXY_MARKER}
+export HTTP_PROXY=\"$_PROXY_URL\"
+export HTTPS_PROXY=\"$_PROXY_URL\"
+export NO_PROXY=\"$_NO_PROXY_VAL\"
+export http_proxy=\"$_PROXY_URL\"
+export https_proxy=\"$_PROXY_URL\"
+export no_proxy=\"$_NO_PROXY_VAL\""
+
+_SANDBOX_HOME="${HOME:-/sandbox}"
+
+_write_proxy_snippet() {
+  local target="$1"
+  if [ -f "$target" ] && grep -qF "$_PROXY_MARKER" "$target" 2>/dev/null; then
+    return 0
+  fi
+  printf '\n%s\n' "$_PROXY_SNIPPET" >>"$target"
+}
+
+if [ -w "$_SANDBOX_HOME" ]; then
+  _write_proxy_snippet "${_SANDBOX_HOME}/.bashrc"
+  _write_proxy_snippet "${_SANDBOX_HOME}/.profile"
 fi
 
 # ── Main ─────────────────────────────────────────────────────────

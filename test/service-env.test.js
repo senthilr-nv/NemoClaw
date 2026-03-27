@@ -104,13 +104,13 @@ describe("service environment", () => {
       const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
       const proxyBlock = execFileSync(
         "sed",
-        ["-n", "/^PROXY_HOST=/,/^export NO_PROXY=/p", scriptPath],
+        ["-n", "/^PROXY_HOST=/,/^export no_proxy=/p", scriptPath],
         { encoding: "utf-8" }
       );
       if (!proxyBlock.trim()) {
         throw new Error(
           "Failed to extract proxy configuration from scripts/nemoclaw-start.sh — " +
-          "the PROXY_HOST/NO_PROXY block may have been moved or renamed"
+          "the PROXY_HOST..no_proxy block may have been moved or renamed"
         );
       }
       const wrapper = [
@@ -119,6 +119,9 @@ describe("service environment", () => {
         'echo "HTTP_PROXY=${HTTP_PROXY}"',
         'echo "HTTPS_PROXY=${HTTPS_PROXY}"',
         'echo "NO_PROXY=${NO_PROXY}"',
+        'echo "http_proxy=${http_proxy}"',
+        'echo "https_proxy=${https_proxy}"',
+        'echo "no_proxy=${no_proxy}"',
       ].join("\n");
       const tmpFile = join(tmpdir(), `nemoclaw-proxy-test-${process.pid}.sh`);
       try {
@@ -158,7 +161,7 @@ describe("service environment", () => {
       expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:8080");
     });
 
-    it("NO_PROXY excludes loopback and inference.local", () => {
+    it("NO_PROXY includes loopback and inference.local", () => {
       const vars = extractProxyVars();
       const noProxy = vars.NO_PROXY.split(",");
       expect(noProxy).toContain("localhost");
@@ -167,43 +170,118 @@ describe("service environment", () => {
       expect(noProxy).toContain("inference.local");
     });
 
-    it("NO_PROXY excludes OpenShell gateway IP", () => {
+    it("NO_PROXY includes OpenShell gateway IP", () => {
       const vars = extractProxyVars();
       expect(vars.NO_PROXY).toContain("10.200.0.1");
     });
 
-    it("writes proxy snippet to /etc/profile.d when the directory exists", () => {
-      const profileDir = join(tmpdir(), `nemoclaw-profile-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", profileDir]);
-      const tmpFile = join(tmpdir(), `nemoclaw-profile-write-test-${process.pid}.sh`);
+    it("exports lowercase proxy variants for undici/gRPC compatibility", () => {
+      const vars = extractProxyVars();
+      expect(vars.http_proxy).toBe("http://10.200.0.1:3128");
+      expect(vars.https_proxy).toBe("http://10.200.0.1:3128");
+      const noProxy = vars.no_proxy.split(",");
+      expect(noProxy).toContain("inference.local");
+      expect(noProxy).toContain("10.200.0.1");
+    });
+
+    it("entrypoint persistence writes proxy snippet to ~/.bashrc and ~/.profile", () => {
+      const fakeHome = join(tmpdir(), `nemoclaw-home-test-${process.pid}`);
+      execFileSync("mkdir", ["-p", fakeHome]);
+      const tmpFile = join(tmpdir(), `nemoclaw-bashrc-write-test-${process.pid}.sh`);
       try {
+        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+        const persistBlock = execFileSync(
+          "sed",
+          ["-n", "/^_PROXY_URL=/,/^fi$/p", scriptPath],
+          { encoding: "utf-8" }
+        );
         const wrapper = [
           "#!/usr/bin/env bash",
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
-          `export HTTP_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `export HTTPS_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `export NO_PROXY="localhost,127.0.0.1,::1,inference.local,\${PROXY_HOST}"`,
-          `if [ -d ${JSON.stringify(profileDir)} ]; then`,
-          `  cat >${JSON.stringify(profileDir)}/nemoclaw-proxy.sh <<PROXYPROFILE`,
-          `export HTTP_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `export HTTPS_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `export NO_PROXY="localhost,127.0.0.1,::1,inference.local,\${PROXY_HOST}"`,
-          "PROXYPROFILE",
-          "fi",
+          persistBlock.trimEnd(),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        execFileSync("bash", [tmpFile], {
+          encoding: "utf-8",
+          env: { ...process.env, HOME: fakeHome },
+        });
 
-        const snippet = readFileSync(join(profileDir, "nemoclaw-proxy.sh"), "utf-8");
-        expect(snippet).toContain("export HTTP_PROXY=");
-        expect(snippet).toContain("export HTTPS_PROXY=");
-        expect(snippet).toContain("export NO_PROXY=");
-        expect(snippet).toContain("inference.local");
-        expect(snippet).toContain("10.200.0.1");
+        const bashrc = readFileSync(join(fakeHome, ".bashrc"), "utf-8");
+        expect(bashrc).toContain("export HTTP_PROXY=");
+        expect(bashrc).toContain("export HTTPS_PROXY=");
+        expect(bashrc).toContain("export NO_PROXY=");
+        expect(bashrc).toContain("inference.local");
+        expect(bashrc).toContain("10.200.0.1");
+
+        const profile = readFileSync(join(fakeHome, ".profile"), "utf-8");
+        expect(profile).toContain("inference.local");
       } finally {
         try { unlinkSync(tmpFile); } catch { /* ignore */ }
-        try { execFileSync("rm", ["-rf", profileDir]); } catch { /* ignore */ }
+        try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
+      }
+    });
+
+    it("entrypoint persistence is idempotent across repeated invocations", () => {
+      const fakeHome = join(tmpdir(), `nemoclaw-idempotent-test-${process.pid}`);
+      execFileSync("mkdir", ["-p", fakeHome]);
+      const tmpFile = join(tmpdir(), `nemoclaw-idempotent-write-test-${process.pid}.sh`);
+      try {
+        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+        const persistBlock = execFileSync(
+          "sed",
+          ["-n", "/^_PROXY_URL=/,/^fi$/p", scriptPath],
+          { encoding: "utf-8" }
+        );
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          persistBlock.trimEnd(),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        const runOpts = { encoding: /** @type {const} */ ("utf-8"), env: { ...process.env, HOME: fakeHome } };
+        execFileSync("bash", [tmpFile], runOpts);
+        execFileSync("bash", [tmpFile], runOpts);
+        execFileSync("bash", [tmpFile], runOpts);
+
+        const bashrc = readFileSync(join(fakeHome, ".bashrc"), "utf-8");
+        const count = (bashrc.match(/nemoclaw-proxy-config/g) || []).length;
+        expect(count).toBe(1);
+      } finally {
+        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+        try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
+      }
+    });
+
+    it("[simulation] sourcing ~/.bashrc overrides narrow NO_PROXY and no_proxy", () => {
+      const fakeHome = join(tmpdir(), `nemoclaw-bashi-test-${process.pid}`);
+      execFileSync("mkdir", ["-p", fakeHome]);
+      try {
+        const bashrcContent = [
+          "# nemoclaw-proxy-config",
+          'export HTTP_PROXY="http://10.200.0.1:3128"',
+          'export HTTPS_PROXY="http://10.200.0.1:3128"',
+          'export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.1"',
+          'export http_proxy="http://10.200.0.1:3128"',
+          'export https_proxy="http://10.200.0.1:3128"',
+          'export no_proxy="localhost,127.0.0.1,::1,inference.local,10.200.0.1"',
+        ].join("\n");
+        writeFileSync(join(fakeHome, ".bashrc"), bashrcContent);
+
+        const out = execFileSync("bash", ["--norc", "-c", [
+          `export HOME=${JSON.stringify(fakeHome)}`,
+          'export NO_PROXY="127.0.0.1,localhost,::1"',
+          'export no_proxy="127.0.0.1,localhost,::1"',
+          `source ${JSON.stringify(join(fakeHome, ".bashrc"))}`,
+          'echo "NO_PROXY=$NO_PROXY"',
+          'echo "no_proxy=$no_proxy"',
+        ].join("; ")], { encoding: "utf-8" }).trim();
+
+        expect(out).toContain("NO_PROXY=localhost,127.0.0.1,::1,inference.local,10.200.0.1");
+        expect(out).toContain("no_proxy=localhost,127.0.0.1,::1,inference.local,10.200.0.1");
+      } finally {
+        try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
       }
     });
   });
