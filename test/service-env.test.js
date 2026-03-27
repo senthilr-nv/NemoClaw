@@ -192,7 +192,7 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_URL=/,/^fi$/p", scriptPath],
+          ["-n", "/^_PROXY_URL=/,/^# ── Main/{ /^# ── Main/d; p; }", scriptPath],
           { encoding: "utf-8" }
         );
         const wrapper = [
@@ -230,7 +230,7 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_URL=/,/^fi$/p", scriptPath],
+          ["-n", "/^_PROXY_URL=/,/^# ── Main/{ /^# ── Main/d; p; }", scriptPath],
           { encoding: "utf-8" }
         );
         const wrapper = [
@@ -264,7 +264,7 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_URL=/,/^fi$/p", scriptPath],
+          ["-n", "/^_PROXY_URL=/,/^# ── Main/{ /^# ── Main/d; p; }", scriptPath],
           { encoding: "utf-8" }
         );
         const makeWrapper = (host) => [

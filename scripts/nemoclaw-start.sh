@@ -252,7 +252,12 @@ export https_proxy=\"$_PROXY_URL\"
 export no_proxy=\"$_NO_PROXY_VAL\"
 ${_PROXY_MARKER_END}"
 
-_SANDBOX_HOME="${HOME:-/sandbox}"
+if [ "$(id -u)" -eq 0 ]; then
+  _SANDBOX_HOME=$(getent passwd sandbox 2>/dev/null | cut -d: -f6)
+  _SANDBOX_HOME="${_SANDBOX_HOME:-/sandbox}"
+else
+  _SANDBOX_HOME="${HOME:-/sandbox}"
+fi
 
 _write_proxy_snippet() {
   local target="$1"
