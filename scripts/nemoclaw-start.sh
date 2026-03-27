@@ -205,6 +205,43 @@ PYAUTOPAIR
   echo "[gateway] auto-pair watcher launched (pid $!)"
 }
 
+# ── Proxy environment ────────────────────────────────────────────
+# OpenShell injects HTTP_PROXY/HTTPS_PROXY/NO_PROXY into the sandbox, but its
+# NO_PROXY is limited to 127.0.0.1,localhost,::1 — missing inference.local and
+# the gateway IP.  Without these entries, LLM inference requests are routed
+# through the egress proxy instead of going direct, and the proxy gateway IP
+# itself gets proxied (potential infinite loop).
+#
+# NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT can be overridden at sandbox
+# creation time if the gateway IP or port changes in a future OpenShell release.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/626
+PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
+PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
+export HTTP_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+export HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+export NO_PROXY="localhost,127.0.0.1,::1,inference.local,${PROXY_HOST}"
+
+# OpenShell re-injects its narrow NO_PROXY=127.0.0.1,localhost,::1 every time a
+# user connects via `openshell sandbox connect`.  Write a profile snippet so the
+# full value is restored on every login shell.
+#
+# When running as root (normal ENTRYPOINT path), write to /etc/profile.d/ which
+# is writable before Landlock lockdown.  When running as non-root (Brev, some CI
+# environments), fall back to ~/.profile which the sandbox user always owns.
+_PROXY_SNIPPET=$(
+  cat <<PROXYPROFILE
+# Written by nemoclaw-start.sh — restores full proxy config after OpenShell env injection.
+export HTTP_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+export HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+export NO_PROXY="localhost,127.0.0.1,::1,inference.local,${PROXY_HOST}"
+PROXYPROFILE
+)
+if [ "$(id -u)" -eq 0 ] && [ -d /etc/profile.d ]; then
+  printf '%s\n' "$_PROXY_SNIPPET" >/etc/profile.d/nemoclaw-proxy.sh
+elif [ -w "${HOME:-/sandbox}" ]; then
+  printf '\n%s\n' "$_PROXY_SNIPPET" >>"${HOME:-/sandbox}/.profile"
+fi
+
 # ── Main ─────────────────────────────────────────────────────────
 
 echo 'Setting up NemoClaw...'

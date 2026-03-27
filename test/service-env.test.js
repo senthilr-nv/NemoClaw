@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
+import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resolveOpenshell } from "../bin/lib/resolve-openshell";
 
 describe("service environment", () => {
@@ -93,6 +96,115 @@ describe("service environment", () => {
         }
       ).trim();
       expect(result).toBe("default");
+    });
+  });
+
+  describe("proxy environment variables (issue #626)", () => {
+    function extractProxyVars(env = {}) {
+      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+      const proxyBlock = execFileSync(
+        "sed",
+        ["-n", "/^PROXY_HOST=/,/^export NO_PROXY=/p", scriptPath],
+        { encoding: "utf-8" }
+      );
+      if (!proxyBlock.trim()) {
+        throw new Error(
+          "Failed to extract proxy configuration from scripts/nemoclaw-start.sh — " +
+          "the PROXY_HOST/NO_PROXY block may have been moved or renamed"
+        );
+      }
+      const wrapper = [
+        "#!/usr/bin/env bash",
+        proxyBlock.trimEnd(),
+        'echo "HTTP_PROXY=${HTTP_PROXY}"',
+        'echo "HTTPS_PROXY=${HTTPS_PROXY}"',
+        'echo "NO_PROXY=${NO_PROXY}"',
+      ].join("\n");
+      const tmpFile = join(tmpdir(), `nemoclaw-proxy-test-${process.pid}.sh`);
+      try {
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        const out = execFileSync("bash", [tmpFile], {
+          encoding: "utf-8",
+          env: { ...process.env, ...env },
+        }).trim();
+        return Object.fromEntries(out.split("\n").map((l) => {
+          const idx = l.indexOf("=");
+          return [l.slice(0, idx), l.slice(idx + 1)];
+        }));
+      } finally {
+        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+      }
+    }
+
+    it("sets HTTP_PROXY to default gateway address", () => {
+      const vars = extractProxyVars();
+      expect(vars.HTTP_PROXY).toBe("http://10.200.0.1:3128");
+    });
+
+    it("sets HTTPS_PROXY to default gateway address", () => {
+      const vars = extractProxyVars();
+      expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:3128");
+    });
+
+    it("NEMOCLAW_PROXY_HOST overrides default gateway IP", () => {
+      const vars = extractProxyVars({ NEMOCLAW_PROXY_HOST: "192.168.64.1" });
+      expect(vars.HTTP_PROXY).toBe("http://192.168.64.1:3128");
+      expect(vars.HTTPS_PROXY).toBe("http://192.168.64.1:3128");
+    });
+
+    it("NEMOCLAW_PROXY_PORT overrides default proxy port", () => {
+      const vars = extractProxyVars({ NEMOCLAW_PROXY_PORT: "8080" });
+      expect(vars.HTTP_PROXY).toBe("http://10.200.0.1:8080");
+      expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:8080");
+    });
+
+    it("NO_PROXY excludes loopback and inference.local", () => {
+      const vars = extractProxyVars();
+      const noProxy = vars.NO_PROXY.split(",");
+      expect(noProxy).toContain("localhost");
+      expect(noProxy).toContain("127.0.0.1");
+      expect(noProxy).toContain("::1");
+      expect(noProxy).toContain("inference.local");
+    });
+
+    it("NO_PROXY excludes OpenShell gateway IP", () => {
+      const vars = extractProxyVars();
+      expect(vars.NO_PROXY).toContain("10.200.0.1");
+    });
+
+    it("writes proxy snippet to /etc/profile.d when the directory exists", () => {
+      const profileDir = join(tmpdir(), `nemoclaw-profile-test-${process.pid}`);
+      execFileSync("mkdir", ["-p", profileDir]);
+      const tmpFile = join(tmpdir(), `nemoclaw-profile-write-test-${process.pid}.sh`);
+      try {
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          `export HTTP_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `export HTTPS_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `export NO_PROXY="localhost,127.0.0.1,::1,inference.local,\${PROXY_HOST}"`,
+          `if [ -d ${JSON.stringify(profileDir)} ]; then`,
+          `  cat >${JSON.stringify(profileDir)}/nemoclaw-proxy.sh <<PROXYPROFILE`,
+          `export HTTP_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `export HTTPS_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `export NO_PROXY="localhost,127.0.0.1,::1,inference.local,\${PROXY_HOST}"`,
+          "PROXYPROFILE",
+          "fi",
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const snippet = readFileSync(join(profileDir, "nemoclaw-proxy.sh"), "utf-8");
+        expect(snippet).toContain("export HTTP_PROXY=");
+        expect(snippet).toContain("export HTTPS_PROXY=");
+        expect(snippet).toContain("export NO_PROXY=");
+        expect(snippet).toContain("inference.local");
+        expect(snippet).toContain("10.200.0.1");
+      } finally {
+        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+        try { execFileSync("rm", ["-rf", profileDir]); } catch { /* ignore */ }
+      }
     });
   });
 });
