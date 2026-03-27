@@ -246,8 +246,52 @@ describe("service environment", () => {
         execFileSync("bash", [tmpFile], runOpts);
 
         const bashrc = readFileSync(join(fakeHome, ".bashrc"), "utf-8");
-        const count = (bashrc.match(/nemoclaw-proxy-config/g) || []).length;
-        expect(count).toBe(1);
+        const beginCount = (bashrc.match(/nemoclaw-proxy-config begin/g) || []).length;
+        const endCount = (bashrc.match(/nemoclaw-proxy-config end/g) || []).length;
+        expect(beginCount).toBe(1);
+        expect(endCount).toBe(1);
+      } finally {
+        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+        try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
+      }
+    });
+
+    it("entrypoint persistence replaces stale proxy values on restart", () => {
+      const fakeHome = join(tmpdir(), `nemoclaw-replace-test-${process.pid}`);
+      execFileSync("mkdir", ["-p", fakeHome]);
+      const tmpFile = join(tmpdir(), `nemoclaw-replace-write-test-${process.pid}.sh`);
+      try {
+        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+        const persistBlock = execFileSync(
+          "sed",
+          ["-n", "/^_PROXY_URL=/,/^fi$/p", scriptPath],
+          { encoding: "utf-8" }
+        );
+        const makeWrapper = (host) => [
+          "#!/usr/bin/env bash",
+          `PROXY_HOST="${host}"`,
+          'PROXY_PORT="3128"',
+          persistBlock.trimEnd(),
+        ].join("\n");
+
+        writeFileSync(tmpFile, makeWrapper("10.200.0.1"), { mode: 0o700 });
+        execFileSync("bash", [tmpFile], {
+          encoding: "utf-8",
+          env: { ...process.env, HOME: fakeHome },
+        });
+        let bashrc = readFileSync(join(fakeHome, ".bashrc"), "utf-8");
+        expect(bashrc).toContain("10.200.0.1");
+
+        writeFileSync(tmpFile, makeWrapper("192.168.1.99"), { mode: 0o700 });
+        execFileSync("bash", [tmpFile], {
+          encoding: "utf-8",
+          env: { ...process.env, HOME: fakeHome },
+        });
+        bashrc = readFileSync(join(fakeHome, ".bashrc"), "utf-8");
+        expect(bashrc).toContain("192.168.1.99");
+        expect(bashrc).not.toContain("10.200.0.1");
+        const beginCount = (bashrc.match(/nemoclaw-proxy-config begin/g) || []).length;
+        expect(beginCount).toBe(1);
       } finally {
         try { unlinkSync(tmpFile); } catch { /* ignore */ }
         try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
@@ -259,13 +303,14 @@ describe("service environment", () => {
       execFileSync("mkdir", ["-p", fakeHome]);
       try {
         const bashrcContent = [
-          "# nemoclaw-proxy-config",
+          "# nemoclaw-proxy-config begin",
           'export HTTP_PROXY="http://10.200.0.1:3128"',
           'export HTTPS_PROXY="http://10.200.0.1:3128"',
           'export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.1"',
           'export http_proxy="http://10.200.0.1:3128"',
           'export https_proxy="http://10.200.0.1:3128"',
           'export no_proxy="localhost,127.0.0.1,::1,inference.local,10.200.0.1"',
+          "# nemoclaw-proxy-config end",
         ].join("\n");
         writeFileSync(join(fakeHome, ".bashrc"), bashrcContent);
 

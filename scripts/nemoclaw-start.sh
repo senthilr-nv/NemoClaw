@@ -239,22 +239,31 @@ export no_proxy="$_NO_PROXY_VAL"
 # Also write to ~/.profile for login-shell paths (e.g. `sandbox create -- cmd`
 # which spawns `bash -lc`).
 #
-# Idempotency: use a marker comment so repeated container restarts don't
-# duplicate the block.
-_PROXY_MARKER="# nemoclaw-proxy-config"
-_PROXY_SNIPPET="${_PROXY_MARKER}
+# Idempotency: begin/end markers delimit the block so it can be replaced
+# on restart if NEMOCLAW_PROXY_HOST/PORT change, without duplicating.
+_PROXY_MARKER_BEGIN="# nemoclaw-proxy-config begin"
+_PROXY_MARKER_END="# nemoclaw-proxy-config end"
+_PROXY_SNIPPET="${_PROXY_MARKER_BEGIN}
 export HTTP_PROXY=\"$_PROXY_URL\"
 export HTTPS_PROXY=\"$_PROXY_URL\"
 export NO_PROXY=\"$_NO_PROXY_VAL\"
 export http_proxy=\"$_PROXY_URL\"
 export https_proxy=\"$_PROXY_URL\"
-export no_proxy=\"$_NO_PROXY_VAL\""
+export no_proxy=\"$_NO_PROXY_VAL\"
+${_PROXY_MARKER_END}"
 
 _SANDBOX_HOME="${HOME:-/sandbox}"
 
 _write_proxy_snippet() {
   local target="$1"
-  if [ -f "$target" ] && grep -qF "$_PROXY_MARKER" "$target" 2>/dev/null; then
+  if [ -f "$target" ] && grep -qF "$_PROXY_MARKER_BEGIN" "$target" 2>/dev/null; then
+    local tmp
+    tmp="$(mktemp)"
+    awk -v b="$_PROXY_MARKER_BEGIN" -v e="$_PROXY_MARKER_END" \
+      '$0==b{s=1;next} $0==e{s=0;next} !s' "$target" >"$tmp"
+    printf '%s\n' "$_PROXY_SNIPPET" >>"$tmp"
+    cat "$tmp" >"$target"
+    rm -f "$tmp"
     return 0
   fi
   printf '\n%s\n' "$_PROXY_SNIPPET" >>"$target"
