@@ -184,14 +184,66 @@ else
   echo "WARNING: Could not find sandbox network namespace. DNS may not work."
 fi
 
-# ── Step 6: Verify ──────────────────────────────────────────────────
+# ── Step 6: Runtime verification ─────────────────────────────────────
+#
+# Verify all three layers of the DNS bridge actually work, not just
+# that the forwarder process started. This catches silent failures that
+# static checks miss.
 
+VERIFY_PASS=0
+VERIFY_FAIL=0
+
+# 6a. Forwarder process running
 PID="$(kctl exec -n openshell "$POD" -- cat /tmp/dns-proxy.pid 2>/dev/null || true)"
 LOG="$(kctl exec -n openshell "$POD" -- cat /tmp/dns-proxy.log 2>/dev/null || true)"
 
 if [ -n "$PID" ] && echo "$LOG" | grep -q "dns-proxy:"; then
-  echo "  DNS proxy started (pid=$PID): $LOG"
+  echo "  [PASS] DNS forwarder running (pid=$PID): $LOG"
+  VERIFY_PASS=$((VERIFY_PASS + 1))
 else
-  echo "WARNING: DNS proxy may not have started. PID=${PID:-none} Log: ${LOG:-empty}"
-  echo "WARNING: Sandbox DNS resolution may not work. See issue #626."
+  echo "  [FAIL] DNS forwarder not running. PID=${PID:-none} Log: ${LOG:-empty}"
+  VERIFY_FAIL=$((VERIFY_FAIL + 1))
+fi
+
+# 6b-6d run inside sandbox namespace (require SANDBOX_NS)
+if [ -n "$SANDBOX_NS" ]; then
+  sb_exec() {
+    kctl exec -n openshell "$POD" -- ip netns exec "$SANDBOX_NS" "$@"
+  }
+
+  # 6b. resolv.conf points to the veth gateway
+  RESOLV="$(sb_exec cat /etc/resolv.conf 2>/dev/null || true)"
+  if echo "$RESOLV" | grep -q "nameserver ${VETH_GW}"; then
+    echo "  [PASS] resolv.conf -> nameserver ${VETH_GW}"
+    VERIFY_PASS=$((VERIFY_PASS + 1))
+  else
+    echo "  [FAIL] resolv.conf does not point to ${VETH_GW}: ${RESOLV}"
+    VERIFY_FAIL=$((VERIFY_FAIL + 1))
+  fi
+
+  # 6c. iptables UDP DNS rule present
+  if sb_exec iptables -C OUTPUT -p udp -d "$VETH_GW" --dport 53 -j ACCEPT 2>/dev/null; then
+    echo "  [PASS] iptables: UDP ${VETH_GW}:53 ACCEPT rule present"
+    VERIFY_PASS=$((VERIFY_PASS + 1))
+  else
+    echo "  [FAIL] iptables: UDP DNS ACCEPT rule missing"
+    VERIFY_FAIL=$((VERIFY_FAIL + 1))
+  fi
+
+  # 6d. Actual DNS resolution from sandbox (getent hosts)
+  DNS_RESULT="$(sb_exec getent hosts github.com 2>/dev/null || true)"
+  if [ -n "$DNS_RESULT" ]; then
+    echo "  [PASS] getent hosts github.com -> ${DNS_RESULT}"
+    VERIFY_PASS=$((VERIFY_PASS + 1))
+  else
+    echo "  [FAIL] getent hosts github.com returned empty (DNS not resolving)"
+    VERIFY_FAIL=$((VERIFY_FAIL + 1))
+  fi
+else
+  echo "  [SKIP] Sandbox namespace not found; cannot verify resolv.conf, iptables, or DNS"
+fi
+
+echo "  DNS verification: ${VERIFY_PASS} passed, ${VERIFY_FAIL} failed"
+if [ "$VERIFY_FAIL" -gt 0 ]; then
+  echo "WARNING: DNS setup incomplete. Sandbox DNS resolution may not work. See issue #626."
 fi

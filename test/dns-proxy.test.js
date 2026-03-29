@@ -79,7 +79,15 @@ describe("setup-dns-proxy.sh", () => {
     const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
     expect(content).toContain("dns-proxy.pid");
     expect(content).toContain("dns-proxy.log");
-    expect(content).toMatch(/WARNING.*DNS proxy may not have started/);
+  });
+
+  it("performs runtime verification of resolv.conf, iptables, and DNS resolution", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    expect(content).toContain("cat /etc/resolv.conf");
+    expect(content).toContain("iptables -C OUTPUT");
+    expect(content).toContain("getent hosts");
+    expect(content).toContain("VERIFY_PASS");
+    expect(content).toContain("VERIFY_FAIL");
   });
 });
 
