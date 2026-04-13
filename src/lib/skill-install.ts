@@ -152,7 +152,7 @@ export interface SshResult {
 export function sshExec(
   ctx: SshContext,
   command: string,
-  opts: { input?: string; timeout?: number } = {},
+  opts: { input?: string | Buffer; timeout?: number } = {},
 ): SshResult | null {
   try {
     const result = spawnSync(
@@ -193,7 +193,7 @@ export function uploadFile(
   remoteDir: string,
   remoteFilename: string,
 ): SshResult | null {
-  const content = fs.readFileSync(localPath, "utf-8");
+  const content = fs.readFileSync(localPath);
   const remotePath = `${remoteDir}/${remoteFilename}`;
   const script = `mkdir -p ${shellQuote(remoteDir)} && cat > ${shellQuote(remotePath)}`;
   return sshExec(ctx, script, { input: content });
@@ -287,7 +287,7 @@ export function postInstall(
       const { files } = collectFiles(localSkillDir);
       let mirrorFailed = false;
       for (const rel of files) {
-        const content = fs.readFileSync(path.join(localSkillDir, rel), "utf-8");
+        const content = fs.readFileSync(path.join(localSkillDir, rel));
         const mirrorSubdir = rel.includes("/")
           ? `${paths.mirrorDir}/${path.dirname(rel)}`
           : paths.mirrorDir;
@@ -313,7 +313,7 @@ export function postInstall(
     // Skip on updates — the agent already knows the skill, and clearing
     // sessions would destroy chat history unnecessarily.
     if (paths.sessionFile && !opts.skipRefresh) {
-      const refreshResult = sshExec(ctx, `echo '{}' > '${paths.sessionFile}'`);
+      const refreshResult = sshExec(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
       if (!refreshResult || refreshResult.status !== 0) {
         messages.push("Warning: failed to clear sessions (agent may need manual restart)");
       }

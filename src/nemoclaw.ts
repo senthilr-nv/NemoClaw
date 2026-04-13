@@ -1241,7 +1241,7 @@ async function sandboxSkillInstall(sandboxName, args = []) {
     console.log("");
     console.log("  Deploy a skill directory to a running sandbox.");
     console.log("  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),");
-    console.log("  or a direct path to a SKILL.md file. All files in the directory are uploaded.");
+    console.log("  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.");
     console.log("");
     return;
   }
