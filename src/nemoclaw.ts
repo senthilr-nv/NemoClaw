@@ -1253,6 +1253,12 @@ async function sandboxSkillInstall(sandboxName, args = []) {
   }
 
   const skillPath = args[1];
+  const extraArgs = args.slice(2);
+  if (extraArgs.length > 0) {
+    console.error(`  Unknown argument(s) for skill install: ${extraArgs.join(", ")}`);
+    console.error("  Usage: nemoclaw <sandbox> skill install <path>");
+    process.exit(1);
+  }
   if (!skillPath) {
     console.error("  Usage: nemoclaw <sandbox> skill install <path>");
     console.error("  <path> must be a directory containing a SKILL.md file.");
