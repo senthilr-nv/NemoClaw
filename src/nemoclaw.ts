@@ -1573,6 +1573,12 @@ const [cmd, ...args] = process.argv.slice(2);
   }
 
   // Sandbox-scoped commands: nemoclaw <name> <action>
+  // If the registry doesn't know this name but the action is connect or skill,
+  // attempt recovery — the sandbox may still be live with a stale registry.
+  if (!registry.getSandbox(cmd) && (args[0] === "connect" || args[0] === "skill")) {
+    validateName(cmd, "sandbox name");
+    await recoverRegistryEntries({ requestedSandboxName: cmd });
+  }
   const sandbox = registry.getSandbox(cmd);
   if (sandbox) {
     validateName(cmd, "sandbox name");
@@ -1609,15 +1615,6 @@ const [cmd, ...args] = process.argv.slice(2);
         process.exit(1);
     }
     return;
-  }
-
-  if (args[0] === "connect") {
-    validateName(cmd, "sandbox name");
-    await recoverRegistryEntries({ requestedSandboxName: cmd });
-    if (registry.getSandbox(cmd)) {
-      await sandboxConnect(cmd);
-      return;
-    }
   }
 
   // Unknown command — suggest
